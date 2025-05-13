@@ -16,11 +16,12 @@ db_name = os.getenv("DB_NAME")
 
 router_start = Router()
 
-dp = Database(host=host, user=user, password=password, dbname=db_name)
+db = Database(host=host, user=user, password=password, dbname=db_name)
 
 class ThemeState(StatesGroup):
     mainTheme = State()
     subTheme = State()
+    discussion = State()
 
 async def mainMessage(chat_id : int, bot: Bot):
     kb = [
@@ -44,4 +45,16 @@ async def startMessage(message: types.Message):
 
 @router_start.message(F.text.lower()=="темы")
 async def showThemes(message: types.Message, state: FSMContext):
+    message_id = await message.answer("...", reply_markup=types.ReplyKeyboardRemove())
+    await message_id.delete()
+    themes = db.get_main_themes()
+    kb = []
+    for theme_id, title in themes:
+        kb.append(
+            [types.InlineKeyboardButton(text=title, callback_data=f"theme_{theme_id}")]
+        )
+    keyboard = types.InlineKeyboardMarkup(inline_keyboard=kb)
+    msg = await message.answer("Выберите основную тему", reply_markup=keyboard)
+    await state.update_data(main_message_id=msg.message_id)
+    await state.set_state(ThemeState.mainTheme)
 
