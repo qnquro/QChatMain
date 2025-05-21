@@ -36,13 +36,12 @@ async def mainMessage(chat_id: int, bot: Bot):
     ]
     keyboard = types.ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True, input_field_placeholder="Выберите")
     return await bot.send_message(chat_id,
-                                  """Привет, это бот с анонимными вопросами
+"""Привет, это бот с анонимными вопросами
                                                             
-                                  Ты можешь задать вопрос, ответить на вопросы других анонимно или как ты пожелаешь
+Ты можешь задать вопрос, ответить на вопросы других анонимно или как ты пожелаешь
                                                             
-                                  Нажми на кнопку ниже, чтобы увидеть темы вопросов или увидеть вопрос дня""",
-                                  reply_markup=keyboard
-                                  )
+Нажми на кнопку ниже, чтобы увидеть темы вопросов или увидеть вопрос дня""",
+reply_markup=keyboard)
 
 
 @router_start.message(Command("start"))

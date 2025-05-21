@@ -22,7 +22,7 @@ class Database:
 
     def get_subthemes(self, parent_id):
         with self.conn.cursor() as cursor:
-            cursor.execute(sql.SQL("SELECT title FROM themes WHERE parent_id = %s"), (parent_id,))
+            cursor.execute(sql.SQL("SELECT id, title FROM themes WHERE parent_id = %s"), (parent_id,))
             return cursor.fetchall()
 
     def get_discussions(self, theme_id):
@@ -74,7 +74,7 @@ class Database:
         try:
             with self.conn.cursor() as cursor:
                 cursor.execute(sql.SQL("""
-                INSERT INTO discussion(theme_id, author, content, is_root)
+                INSERT INTO discussions(theme_id, author, content, is_root)
                 VALUES (%s, %s, %s, TRUE)
                 """), (theme_id, author, content))
         except ps.Error as e:

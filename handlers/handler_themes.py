@@ -48,7 +48,7 @@ async def handle_subthemes(callback: types.CallbackQuery, state: FSMContext, sub
     data = await state.get_data()
     main_theme_id = data["main_theme_id"]
 
-    discussions = db.get_discussion(subtheme_id)
+    discussions = db.get_discussions(subtheme_id)
     kb = []
     for disc_id, author, content in discussions:
         if len(content) > 50:
