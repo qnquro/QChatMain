@@ -81,10 +81,10 @@ async def handle_discussion(callback: types.CallbackQuery, state: FSMContext, di
     replies = db.get_replies(discussion_id)
 
     if not discussion:
-        await callback.answer("Обсуждение не найдено")
+        await callback.message.answer("Обсуждение не найдено")
         return
 
-    text = f"Обсуждение: {discussion}"
+    text = f"Обсуждение: {discussion.get('content')}"
     data = await state.get_data()
     subtheme_id = data.get("subtheme_id")
     kb = [

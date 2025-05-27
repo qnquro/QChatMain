@@ -37,10 +37,11 @@ class Database:
 
     def get_discussion(self, discussion_id):
         with self.conn.cursor() as cursor:
+            print(discussion_id)
             cursor.execute(sql.SQL("""
             SELECT id, author, content, theme_id
             FROM discussions
-            WHERE parent_discussion_id = %s AND is_root=TRUE
+            WHERE id = %s AND is_root=TRUE
             """), (discussion_id,))
             row = cursor.fetchone()
             if row:
@@ -52,7 +53,7 @@ class Database:
             cursor.execute(sql.SQL("""
             SELECT author, content, content_type, media_id, user_id 
             FROM discussions
-            WHERE parent_discussions_id = %s
+            WHERE parent_discussion_id = %s
             ORDER BY created_at ASC
             """), (discussion_id,))
             return [{'author': row[0], 'content': row[1], 'content_type': row[2], 'media_id': row[3], 'user_id':row[4] } for row in cursor.fetchall()]
