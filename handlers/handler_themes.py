@@ -1,7 +1,7 @@
 from aiogram import Router, types, F
 from aiogram.fsm.context import FSMContext
 from aiogram.filters.state import StateFilter
-from aiogram.types import CallbackQuery
+from aiogram.types import CallbackQuery, ReplyKeyboardRemove
 from start import mainMessage
 from start import ThemeState as Theme
 from start import db
@@ -84,6 +84,7 @@ async def handle_discussion(callback: types.CallbackQuery, state: FSMContext, di
         await callback.message.answer("Обсуждение не найдено")
         return
 
+    await state.update_data(current_discussion=discussion_id)
     text = f"Обсуждение: {discussion.get('content')}"
     data = await state.get_data()
     subtheme_id = data.get("subtheme_id")
@@ -112,13 +113,53 @@ async def handle_discussion(callback: types.CallbackQuery, state: FSMContext, di
     await callback.answer()
 
 
-@router_themes.callback_query(F.data.startswith("reply_"), Theme.discussion)
-async def starting_reply(callback: CallbackQuery, state: FSMContext):
-    discussion_id = int(callback.data.split("_")[1])
+@router_themes.message(F.text.lower() == "назад", StateFilter(Theme.discussion))
+async def handle_back(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    subtheme_id = data.get("subtheme_id")
+    main_theme_id = data["main_theme_id"]
+
+    if not subtheme_id:
+        await message.answer("❌ Ошибка навигации", reply_markup=ReplyKeyboardRemove())
+        return
+
+    message_id = await message.answer("...", reply_markup=ReplyKeyboardRemove())
+    await message_id.delete()
+    discussions = db.get_discussions(subtheme_id)
+    kb = []
+    for disc_id, author, content in discussions:
+        if len(content) > 50:
+            preview = content[55] + "..."
+        else:
+            preview = content
+        button = f"{author}: {preview}"
+        kb.append(
+            [types.InlineKeyboardButton(text=button, callback_data=f"discussion_{disc_id}")]
+        )
+
+    kb.append([
+        types.InlineKeyboardButton(text="Создать обсуждение", callback_data=f"create_discussion_{subtheme_id}"),
+        types.InlineKeyboardButton(text="Назад", callback_data=f"theme_{main_theme_id}"),
+        types.InlineKeyboardButton(text="Главное меню", callback_data="main_menu")
+    ])
+    await message.answer(
+        "Доступные обсуждения", reply_markup=types.InlineKeyboardMarkup(inline_keyboard=kb)
+    )
+    await state.set_state(Theme.discussion)
+
+
+@router_themes.message(F.text.lower() == "ответить")
+async def starting_reply(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    discussion_id = data.get("current_discussion")
+
+    if not discussion_id:
+        await message.answer("❌ Сначала выберите обсуждение!")
+        return
+
     await state.update_data(reply_to=discussion_id)
-    await callback.message.answer("Введите ваш ответ (текст, фото или видео):")
+    await message.answer("Введите ваш ответ (текст, фото или видео):", reply_markup=ReplyKeyboardRemove())
     await state.set_state(Theme.replying)
-    await callback.answer()
 
 
 @router_themes.message(Theme.replying)
@@ -226,9 +267,9 @@ async def save_discussion(callback: types.CallbackQuery, state: FSMContext):
 
     db.add_discussion(subtheme_id, author, content)
     await callback.message.answer("Ваше обсуждение создано.")
-    await state.clear()
     await handle_subthemes(callback, state, subtheme_id)
     await callback.answer()
+
 
 @router_themes.callback_query(F.data == "back_to_main_menu")
 async def handle_back_to_main(callback: types.CallbackQuery, state: FSMContext):
