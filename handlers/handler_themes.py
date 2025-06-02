@@ -1,10 +1,11 @@
+from typing import Union
 from aiogram import Router, types, F
 from aiogram.fsm.context import FSMContext
 from aiogram.filters.state import StateFilter
 from aiogram.types import CallbackQuery, ReplyKeyboardRemove
-from start import mainMessage
-from start import ThemeState as Theme
-from start import db
+from handlers.start import mainMessage
+from handlers.start import ThemeState as Theme
+from handlers.start import db
 
 router_themes = Router()
 
@@ -17,29 +18,158 @@ def format_author(author, user_id):
         return author
 
 
+# Функция для получения тем(слишком большая и важная)
+async def show_discussion(event: Union[CallbackQuery, types.Message], state: FSMContext, discussion_id: int,
+                          page: int = 0):
+    # Получение данных из БД
+    discussion = db.get_discussion(discussion_id)
+    replies = db.get_replies(discussion_id)
+
+    if not discussion:
+        await event.answer("Обсуждение не найдено")
+        return
+
+    await state.update_data(current_discussion=discussion_id, page=page)
+
+    total_replies = len(replies)
+    max_page = max(0, (total_replies + 9) // 10 - 1)
+    start = page * 10
+    end = min(start + 10, total_replies)
+    replies_pg = replies[start:end]
+
+    text = f"Обсуждение: {discussion.get('content')}"
+    kb = [
+        [types.KeyboardButton(text="Ответить"),
+         types.KeyboardButton(text="Назад")],
+        []
+    ]
+
+    if page > 0:
+        kb[1].append(types.KeyboardButton(text="◀️ Предыдущая"))
+    if page < max_page:
+        kb[1].append(types.KeyboardButton(text="▶️ Следующая"))
+
+    # Определение параметров чата
+    if isinstance(event, CallbackQuery):
+        chat_id = event.message.chat.id
+        bot = event.bot
+        message_func = event.message.answer
+    else:
+        chat_id = event.chat.id
+        bot = event.bot
+        message_func = event.answer
+
+    await message_func(
+        text,
+        parse_mode="HTML",
+        reply_markup=types.ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
+    )
+
+    data = await state.get_data()
+    old_messages = data.get('messages', [])
+    for msg_id in old_messages:
+        try:
+            await bot.delete_message(chat_id, msg_id)
+        except:
+            pass
+
+    # Отправка ответов
+    new_messages = []
+    for reply in replies_pg:
+        author_text = format_author(reply['author'], reply['user_id'])
+        sent_msg = None
+        if reply['content_type'] == 'text':
+            message_text = f"{author_text}: {reply['content']}"
+            sent_msg = await bot.send_message(chat_id, message_text, parse_mode="HTML")
+
+        elif reply['content_type'] in ['photo', 'video', 'animation']:
+            caption = f"{author_text}: {reply['content']}"
+            if reply['content_type'] == 'photo':
+                sent_msg = await bot.send_photo(chat_id, reply['media_id'], caption=caption, parse_mode="HTML")
+            elif reply['content_type'] == 'video':
+                sent_msg = await bot.send_video(chat_id, reply['media_id'], caption=caption, parse_mode="HTML")
+            elif reply['content_type'] == 'animation':
+                sent_msg = await bot.send_animation(chat_id, reply['media_id'], caption=caption, parse_mode="HTML")
+
+        elif reply['content_type'] in ['document', 'audio']:
+            caption = f"{author_text}: {reply['content']}"
+            if reply['content_type'] == 'document':
+                sent_msg = await bot.send_document(
+                    chat_id,
+                    reply['media_id'],
+                    caption=caption,
+                    parse_mode="HTML",
+                    file_name=reply.get('file_name')
+                )
+            elif reply['content_type'] == 'audio':
+                sent_msg = await bot.send_audio(
+                    chat_id,
+                    reply['media_id'],
+                    caption=caption,
+                    parse_mode="HTML",
+                    title=reply.get('file_name')
+                )
+        elif reply['content_type'] in ['voice', 'video_note', 'sticker']:
+            if reply['content']:
+                await bot.send_message(chat_id, f"{author_text}: {reply['content']}", parse_mode="HTML")
+            else:
+                await bot.send_message(chat_id, author_text, parse_mode="HTML")
+            if reply['content_type'] == 'voice':
+                sent_msg = await bot.send_voice(chat_id, reply['media_id'])
+            elif reply['content_type'] == 'video_note':
+                sent_msg = await bot.send_video_note(chat_id, reply['media_id'])
+            elif reply['content_type'] == 'sticker':
+                sent_msg = await bot.send_sticker(chat_id, reply['media_id'])
+        if sent_msg:
+            new_messages.append(sent_msg.message_id)
+
+    await state.update_data(messages=new_messages, max_page=max_page)
+
+    if isinstance(event, CallbackQuery):
+        await event.answer()
+
+
 # Выбор подтемы. Из callback'а берётся значение темы и переходит в состояние subtheme
 @router_themes.callback_query(F.data.startswith("theme_"), StateFilter(Theme.mainTheme, Theme.discussion))
 async def handle_main_theme(callback: types.CallbackQuery, state: FSMContext):
-    theme_id = int(callback.data.split("_")[1])
-    await state.update_data(main_theme_id=theme_id)
+    try:
+        theme_id = int(callback.data.split("_")[1])
+        await state.update_data(main_theme_id=theme_id)
+        subthemes = db.get_subthemes(theme_id)
+        kb = []
+        for sub_id, title in subthemes:
+            kb.append(
+                [types.InlineKeyboardButton(text=title, callback_data=f"subtheme_{sub_id}")]
+            )
+        kb.append([types.InlineKeyboardButton(text="Назад", callback_data="back_to_main_menu")])
 
-    subthemes = db.get_subthemes(theme_id)
-    kb = []
-    for sub_id, title in subthemes:
-        kb.append(
-            [types.InlineKeyboardButton(text=title, callback_data=f"subtheme_{sub_id}")]
-        )
-    kb.append([types.InlineKeyboardButton(text="Назад", callback_data="back_to_main_menu")])
+        await callback.message.edit_text("Выберите подтему",
+                                         reply_markup=types.InlineKeyboardMarkup(inline_keyboard=kb)
+                                         )
+        await state.set_state(Theme.subTheme)
+        await callback.answer()
+    except:
+        print("callback is none")
+        data = await state.get_data()
+        main_theme_id = data.get("main_theme_id")
+        theme_id = main_theme_id
+        await state.update_data(main_theme_id=theme_id)
+        subthemes = db.get_subthemes(theme_id)
+        kb = []
+        for sub_id, title in subthemes:
+            kb.append(
+                [types.InlineKeyboardButton(text=title, callback_data=f"subtheme_{sub_id}")]
+            )
+        kb.append([types.InlineKeyboardButton(text="Назад", callback_data="back_to_main_menu")])
 
-    await callback.message.edit_text("Выберите подтему",
-                                     reply_markup=types.InlineKeyboardMarkup(inline_keyboard=kb)
-                                     )
+        await callback.message.edit_text("Выберите подтему",
+                                         reply_markup=types.InlineKeyboardMarkup(inline_keyboard=kb)
+                                         )
+        await state.update_data(main_theme_id=None)
+        await state.set_state(Theme.subTheme)
+        await callback.answer()
 
-    await state.set_state(Theme.subTheme)
-    await callback.answer()
 
-
-# Выбор дискуссии в теме. Из callback'а берётся id сабтемы и выбираются все доступные дискуссии в ней(только показ, только выбор дискуссии)
 @router_themes.callback_query(F.data.startswith("subtheme_"), StateFilter(Theme.subTheme, Theme.discussion))
 async def handle_subthemes(callback: types.CallbackQuery, state: FSMContext, subtheme_id=None):
     if subtheme_id is None:
@@ -72,52 +202,36 @@ async def handle_subthemes(callback: types.CallbackQuery, state: FSMContext, sub
     await callback.answer()
 
 
-# Получение ответов и взаимодействие(просмотр, ответить)
-@router_themes.callback_query(F.data.startswith("discussion_"), Theme.discussion)
-async def handle_discussion(callback: types.CallbackQuery, state: FSMContext, discussion_id=None):
-    if discussion_id is None:
-        discussion_id = int(callback.data.split("_")[1])
-    discussion = db.get_discussion(discussion_id)
-    replies = db.get_replies(discussion_id)
+@router_themes.callback_query(F.data.startswith("discussion_"), StateFilter(Theme.discussion))
+async def handle_discussion_callback(callback: CallbackQuery, state: FSMContext):
+    discussion_id = int(callback.data.split("_")[1])
+    await show_discussion(callback, state, discussion_id)
 
-    if not discussion:
-        await callback.message.answer("Обсуждение не найдено")
-        return
 
-    await state.update_data(current_discussion=discussion_id)
-    text = f"Обсуждение: {discussion.get('content')}"
+@router_themes.message(F.text.lower() == "◀️ предыдущая", StateFilter(Theme.discussion))
+async def prev_page(message: types.Message, state: FSMContext):
     data = await state.get_data()
-    subtheme_id = data.get("subtheme_id")
-    kb = [
-        [types.KeyboardButton(text="Ответить"),
-         types.KeyboardButton(text="Назад")]
-    ]
-    await callback.message.answer(
-        text,
-        parse_mode="HTML",
-        reply_markup=types.ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
-    )
-    bot = callback.bot
-    chat_id = callback.message.chat.id
-    for reply in replies:
-        author_text = format_author(reply['author'], reply['user_id'])
-        if reply['content_type'] == 'text':
-            message_text = f"{author_text}: {reply['content']}"
-            await bot.send_message(chat_id, message_text, parse_mode="HTML")
-        elif reply['content_type'] == 'photo':
-            caption = f"{author_text}: {reply['content']}"
-            await bot.send_photo(chat_id, reply['media_id'], caption=caption, parse_mode="HTML")
-        elif reply['content_type'] == 'video':
-            caption = f"{author_text}: {reply['content']}"
-            await bot.send_video(chat_id, reply['media_id'], caption=caption, parse_mode="HTML")
-    await callback.answer()
+    page = data.get("page", 0)
+    discussion_id = data.get("current_discussion")
+    if discussion_id and page > 0:
+        await show_discussion(message, state, discussion_id, page - 1)
+
+
+@router_themes.message(F.text.lower() == "▶️ следующая", StateFilter(Theme.discussion))
+async def next_page(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    page = data.get("page", 0)
+    max_page = data.get("max_page", 0)
+    discussion_id = data.get("current_discussion")
+    if discussion_id and page < max_page:
+        await show_discussion(message, state, discussion_id, page + 1)
 
 
 @router_themes.message(F.text.lower() == "назад", StateFilter(Theme.discussion))
 async def handle_back(message: types.Message, state: FSMContext):
     data = await state.get_data()
     subtheme_id = data.get("subtheme_id")
-    main_theme_id = data["main_theme_id"]
+    main_theme_id = data.get("main_theme_id")
 
     if not subtheme_id:
         await message.answer("❌ Ошибка навигации", reply_markup=ReplyKeyboardRemove())
@@ -167,6 +281,7 @@ async def recieve_reply(message: types.Message, state: FSMContext):
     content_type = 'text'
     content = None
     media_id = None
+    file_name = None  # Добавим для хранения имени файла
     if message.text:
         content = message.text
     elif message.photo:
@@ -177,8 +292,34 @@ async def recieve_reply(message: types.Message, state: FSMContext):
         content_type = 'video'
         media_id = message.video.file_id
         content = message.caption or ''
+    elif message.document:
+        content_type = 'document'
+        media_id = message.document.file_id
+        file_name = message.document.file_name
+        content = message.caption or ''
+    elif message.audio:
+        content_type = 'audio'
+        media_id = message.audio.file_id
+        file_name = message.audio.file_name
+        content = message.caption or ''
+    elif message.voice:
+        content_type = 'voice'
+        media_id = message.voice.file_id
+        content = message.caption or ''
+    elif message.video_note:
+        content_type = 'video_note'
+        media_id = message.video_note.file_id
+        content = message.caption or ''
+    elif message.sticker:
+        content_type = 'sticker'
+        media_id = message.sticker.file_id
+        content = ''
+    elif message.animation:
+        content_type = 'animation'
+        media_id = message.animation.file_id
+        content = message.caption or ''
     else:
-        await message.reply("Неподдерживаемый тип контента. Пожалуйста, отправьте текст, фото или видео.")
+        await message.reply("Неподдерживаемый тип контента. Отправьте текст, файл или медиа.")
         return
     await state.update_data(content=content, media_id=media_id, content_type=content_type)
     kb = [
@@ -223,17 +364,17 @@ async def save_reply(callback: types.CallbackQuery, state: FSMContext):
 
     db.add_reply(discussion_id, author, content, content_type, media_id, user_id)
     await callback.message.answer("Ваш ответ сохранён.")
-    await state.clear()
-    await handle_discussion(callback, state, discussion_id)
+    await show_discussion(callback, state, discussion_id)
     await callback.answer()
+    await state.set_state(Theme.discussion)
 
 
 @router_themes.callback_query(F.data == "cancel_reply", Theme.confirming_reply)
 async def cancel_reply(callback: types.CallbackQuery, state: FSMContext):
     await callback.message.answer("Отправка ответа отменена.")
-    await state.clear()
-    await handle_discussion(callback, state)
+    await show_discussion(callback, state)
     await callback.answer()
+    await state.set_state(Theme.discussion)
 
 
 @router_themes.callback_query(F.data.startswith("create_discussion_"), Theme.discussion)
@@ -273,7 +414,6 @@ async def save_discussion(callback: types.CallbackQuery, state: FSMContext):
 
 @router_themes.callback_query(F.data == "back_to_main_menu")
 async def handle_back_to_main(callback: types.CallbackQuery, state: FSMContext):
-    data = await state.get_data()
     main_themes = db.get_main_themes()
 
     kb = []

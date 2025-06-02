@@ -5,6 +5,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+
 class Database:
     def __init__(self, host, user, password, dbname):
         self.conn = ps.connect(
@@ -37,7 +38,6 @@ class Database:
 
     def get_discussion(self, discussion_id):
         with self.conn.cursor() as cursor:
-            print(discussion_id)
             cursor.execute(sql.SQL("""
             SELECT id, author, content, theme_id
             FROM discussions
@@ -56,9 +56,10 @@ class Database:
             WHERE parent_discussion_id = %s
             ORDER BY created_at ASC
             """), (discussion_id,))
-            return [{'author': row[0], 'content': row[1], 'content_type': row[2], 'media_id': row[3], 'user_id':row[4] } for row in cursor.fetchall()]
+            return [{'author': row[0], 'content': row[1], 'content_type': row[2], 'media_id': row[3], 'user_id': row[4]}
+                    for row in cursor.fetchall()]
 
-    def add_reply(self, parent_id, author, content, content_type, media_id, user_id = None):
+    def add_reply(self, parent_id, author, content, content_type, media_id, user_id=None):
         try:
             with self.conn.cursor() as cursor:
                 cursor.execute(sql.SQL("""
@@ -71,7 +72,7 @@ class Database:
             logger.error(f"Ошибка при добавлении ответа {e}")
             raise RuntimeError("Reply add is failed") from e
 
-    def add_discussion(self, theme_id,author, content):
+    def add_discussion(self, theme_id, author, content):
         try:
             with self.conn.cursor() as cursor:
                 cursor.execute(sql.SQL("""
@@ -81,3 +82,34 @@ class Database:
         except ps.Error as e:
             logger.error(f"Ошибка при добавлении дискуссии {e}")
             raise RuntimeError("Discussion add is failed") from e
+
+    def get_root_discussion_ids(self) -> list[int]:
+        try:
+            with self.conn.cursor() as cursor:
+                cursor.execute("""
+                    SELECT id 
+                    FROM discussions 
+                    WHERE is_root IS TRUE
+                """)
+                results = cursor.fetchall()
+                return [row[0] for row in results] if results else []
+        except ps.Error as e:
+            logger.error(f"Ошибка при получении ID записей: {e}")
+            raise RuntimeError("Get IDs operation failed") from e
+
+    def get_theme_info_for_discussion(self, id) -> list[int]:
+        try:
+            with self.conn.cursor() as cursor:
+                cursor.execute(sql.SQL("""
+                SELECT theme_id from discussions WHERE id = %s
+                """), (id,))
+                theme_id = cursor.fetchone()[0]
+                cursor.execute(sql.SQL("""
+                SELECT parent_id from themes WHERE id = %s
+                """), (theme_id,))
+                parent_id = cursor.fetchone()[0]
+                lst = [theme_id, parent_id]
+                return lst
+        except ps.Error as e:
+            logger.error(f"Ошибка при получении ID записей: {e}")
+            raise RuntimeError("Get IDs operation failed(get_theme_info_for_discussion)") from e

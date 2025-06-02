@@ -12,7 +12,7 @@ bot = Bot(TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
 
-dp.include_router(start.router_start, )
+dp.include_router(start.router_start )
 dp.include_router(handler_themes.router_themes)
 
 
